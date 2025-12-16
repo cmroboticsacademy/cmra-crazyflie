@@ -56,6 +56,8 @@ uris = [
     'radio://0/80/2M/E7E7E7E7E7',  # cf_id 0, startup position [anywhere]
 ]
 
+starting_positions = []
+
 
 # Possible commands, all times are in seconds
 Arm = namedtuple('Arm', [])
@@ -74,6 +76,9 @@ sequence = [
     (1,    0,      Takeoff(1.0, 2)),
 
     (2,    0,      Goto(1,  1,   1, 2, field_relative)),
+    
+    # return to home
+    (3, 0, Goto(starting_positions[0][0], starting_positions[0][1], starting_positions[0][2]+ .5, field_relative))
     
 	(3,    0,      Land(2)),
     
@@ -113,6 +118,82 @@ def verify_loco_deck_swarm(swarm):
     swarm.parallel_safe(check_deck)
     return all_connected
 
+def wait_for_position_estimator(scf):
+    print('Waiting for estimator to find position...')
+
+    log_config = LogConfig(name='Kalman Variance', period_in_ms=500)
+    log_config.add_variable('kalman.varPX', 'float')
+    log_config.add_variable('kalman.varPY', 'float')
+    log_config.add_variable('kalman.varPZ', 'float')
+
+    var_y_history = [1000] * 10
+    var_x_history = [1000] * 10
+    var_z_history = [1000] * 10
+
+    threshold = 0.001
+
+    with SyncLogger(scf, log_config) as logger:
+        for log_entry in logger:
+            data = log_entry[1]
+
+            var_x_history.append(data['kalman.varPX'])
+            var_x_history.pop(0)
+            var_y_history.append(data['kalman.varPY'])
+            var_y_history.pop(0)
+            var_z_history.append(data['kalman.varPZ'])
+            var_z_history.pop(0)
+
+            min_x = min(var_x_history)
+            max_x = max(var_x_history)
+            min_y = min(var_y_history)
+            max_y = max(var_y_history)
+            min_z = min(var_z_history)
+            max_z = max(var_z_history)
+
+            if (max_x - min_x) < threshold and (
+                    max_y - min_y) < threshold and (
+                    max_z - min_z) < threshold:
+                break
+
+def reset_estimator(scf):
+    cf = scf.cf
+    cf.param.set_value('kalman.resetEstimation', '1')
+    time.sleep(0.1)
+    cf.param.set_value('kalman.resetEstimation', '0')
+
+    wait_for_position_estimator(cf)
+def save_initial_state(scf):
+    
+    # Save the initial state of the drone after the estimator finds the position.
+    global initial_state
+    log_config = LogConfig(name='Initial State', period_in_ms=500)
+    log_config.add_variable('kalman.stateX', 'float')
+    log_config.add_variable('kalman.stateY', 'float')
+    log_config.add_variable('kalman.stateZ', 'float')
+
+    with SyncLogger(scf, log_config) as logger:
+        for log_entry in logger:
+            data = log_entry[1]
+            initial_state = (data['kalman.stateX'], data['kalman.stateY'], data['kalman.stateZ'])
+            print(f"Initial state saved: {initial_state}")
+            starting_positions.append(initial_state)
+            break  # Exit after saving the first reading
+
+def position_callback(timestamp, data, logconf):
+    x = data['kalman.stateX']
+    y = data['kalman.stateY']
+    z = data['kalman.stateZ']
+    print('pos: ({}, {}, {})'.format(x, y, z))
+
+def start_position_printing(scf):
+    log_conf = LogConfig(name='Position', period_in_ms=500)
+    log_conf.add_variable('kalman.stateX', 'float')
+    log_conf.add_variable('kalman.stateY', 'float')
+    log_conf.add_variable('kalman.stateZ', 'float')
+
+    scf.cf.log.add_config(log_conf)
+    log_conf.data_received_cb.add_callback(position_callback)
+    log_conf.start()
 
 
 def arm(scf):
@@ -206,9 +287,10 @@ if __name__ == '__main__':
 
         
         print("Resetting Estimators")
-        swarm.reset_estimators()
+        swarm.parallel_safe(reset_estimators)
         print("Estimators Reset")
         
+        swarm.parallel_safe(initial_state)
         input("Ready to Fly, press ENTER to continue")
 
         print('Starting sequence!')
