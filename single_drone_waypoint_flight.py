@@ -42,7 +42,8 @@ from queue import Queue
 import cflib.crtp
 from cflib.crazyflie.swarm import CachedCfFactory
 from cflib.crazyflie.swarm import Swarm
-
+from cflib.crazyflie.log import LogConfig
+from cflib.crazyflie.syncLogger import SyncLogger
 # Time for one step in second
 STEP_TIME = 2
 
@@ -53,11 +54,11 @@ drone_relative = True
 
 # Define the URI of the Crazyflie (e.g., replace with your specific radio addresses)
 uris = [
-    'radio://0/80/2M/E7E7E7E7E7',  # cf_id 0, startup position [anywhere]
+    'radio://0/80/2M/E7E7E7E7E0',  # cf_id 0, startup position [anywhere]
 ]
 
-starting_positions = []
-
+starting_positions = [None] * len(uris)
+starting_positions_lock = threading.Lock()
 
 # Possible commands, all times are in seconds
 Arm = namedtuple('Arm', [])
@@ -68,6 +69,7 @@ Goto = namedtuple('Goto', ['x', 'y', 'z', 'time', 'relative'])
 Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 # Reserved for the control loop, do not use in sequence
 Quit = namedtuple('Quit', [])
+GoHome = namedtuple('GoHome', [])
 
 sequence = [
     # Step, CF_id,  action
@@ -77,10 +79,9 @@ sequence = [
 
     (2,    0,      Goto(1,  1,   1, 2, field_relative)),
     
-    # return to home
-    (3, 0, Goto(starting_positions[0][0], starting_positions[0][1], starting_positions[0][2]+ .5, field_relative))
+    (3, 0, GoHome()),
     
-	(3,    0,      Land(2)),
+	(4,    0,      Land(2)),
     
 ]
 
@@ -161,11 +162,9 @@ def reset_estimator(scf):
     time.sleep(0.1)
     cf.param.set_value('kalman.resetEstimation', '0')
 
-    wait_for_position_estimator(cf)
+    wait_for_position_estimator(scf)
 def save_initial_state(scf):
     
-    # Save the initial state of the drone after the estimator finds the position.
-    global initial_state
     log_config = LogConfig(name='Initial State', period_in_ms=500)
     log_config.add_variable('kalman.stateX', 'float')
     log_config.add_variable('kalman.stateY', 'float')
@@ -174,9 +173,11 @@ def save_initial_state(scf):
     with SyncLogger(scf, log_config) as logger:
         for log_entry in logger:
             data = log_entry[1]
-            initial_state = (data['kalman.stateX'], data['kalman.stateY'], data['kalman.stateZ'])
-            print(f"Initial state saved: {initial_state}")
-            starting_positions.append(initial_state)
+            pos = (data['kalman.stateX'], data['kalman.stateY'], data['kalman.stateZ'])
+            idx = uris.index(scf.cf.link_uri)
+            with starting_positions_lock:
+                starting_positions[idx] = pos
+            print(f"Initial state saved: (idx {idx}): {pos}")
             break  # Exit after saving the first reading
 
 def position_callback(timestamp, data, logconf):
@@ -224,7 +225,6 @@ def crazyflie_control(scf):
     # Set fade to color effect and reset to Led-ring OFF
     set_ring_color(cf, 0, 0, 0, 0, 0)
     cf.param.set_value('ring.effect', '14')
-
     while True:
         command = control.get()
         if type(command) is Quit:
@@ -241,6 +241,15 @@ def crazyflie_control(scf):
             set_ring_color(cf, command.r, command.g, command.b,
                            command.intensity, command.time)
             pass
+        elif type(command) is GoHome:
+            idx = uris.index(cf.link_uri)
+            with starting_positions_lock:
+                home = starting_positions[idx]
+            if home is None:
+                print(f"NO HOME FOUND {cf.link_uri}")
+                continue
+            
+            commander.go_to(home[0], home[1], home[2] +.5, 0, 2, field_relative)
         else:
             print('Warning! unknown command {} for uri {}'.format(command,
                                                                   cf.uri))
@@ -287,10 +296,11 @@ if __name__ == '__main__':
 
         
         print("Resetting Estimators")
-        swarm.parallel_safe(reset_estimators)
+        swarm.parallel_safe(reset_estimator)
         print("Estimators Reset")
+        swarm.parallel_safe(save_initial_state)
+        print("Starting points:", starting_positions)
         
-        swarm.parallel_safe(initial_state)
         input("Ready to Fly, press ENTER to continue")
 
         print('Starting sequence!')
