@@ -67,7 +67,7 @@ Goto = namedtuple('Goto', ['x', 'y', 'z', 'time', 'relative'])
 Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 # Reserved for the control loop, do not use in sequence
 Quit = namedtuple('Quit', [])
-GoHome = namedtuple('GoHome', [])
+Gohome = namedtuple('Gohome', ['time'])
 
 
 # variables for controlling relative vs absolute movements. DO NOT TOUCH
@@ -86,29 +86,29 @@ sequence = [
     (0,    1,      Arm()),
     (0,    2,      Arm()),
 
-    (1,    0,      Takeoff(1.0, 2)),
-    (1,    1,      Takeoff(1.0, 2)),
-    (1,    2,      Takeoff(1.0, 2)),
+    (1,    0,      Takeoff(1.0, STEP_TIME)),
+    (1,    1,      Takeoff(1.0, STEP_TIME)),
+    (1,    2,      Takeoff(1.0, STEP_TIME)),
     
-    (2,    0,      Goto(1,  1,   1, 2, field_relative)),
-    (2,    1,      Goto(.5, 1,   1, 2, field_relative)),
-    (2,    2,      Goto(1.5,  1,   1, 2, field_relative)),
+    (2,    0,      Goto(0.1,  1,   1, STEP_TIME, field_relative)),
+    (2,    1,      Goto(0.5,  1,   1, STEP_TIME, field_relative)),
+    (2,    2,      Goto(1.5,  1,   1, STEP_TIME, field_relative)),
 
-    (2,    0,      Goto(box_size,  0,   0, 2, drone_relative)),
-    (2,    1,      Goto(box_size,  0,   0, 2, drone_relative)),
-    (2,    2,      Goto(box_size,  0,   0, 2, drone_relative)),
+    (2,    0,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
+    (2,    1,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
+    (2,    2,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
 
-   	(3,    0,      Goto(0, box_size,   0, 2, drone_relative)),
-    (3,    1,      Goto(0, box_size,   0, 2, drone_relative)),
-    (3,    2,      Goto(0, box_size,   0, 2, drone_relative)),
+   	(3,    0,      Goto(0, box_size,   0, STEP_TIME, drone_relative)),
+    (3,    1,      Goto(0, box_size,   0, STEP_TIME, drone_relative)),
+    (3,    2,      Goto(0, box_size,   0, STEP_TIME, drone_relative)),
 	
-	(4,    0,      Goto(-box_size,  0,   0, 2, drone_relative)),
-    (4,    1,      Goto(-box_size, 0,   0, 2, drone_relative)),
-    (4,    2,      Goto(-box_size, 0,   0, 2, drone_relative)),
+	(4,    0,      Goto(-box_size, 0,   0, STEP_TIME, drone_relative)),
+    (4,    1,      Goto(-box_size, 0,   0, STEP_TIME, drone_relative)),
+    (4,    2,      Goto(-box_size, 0,   0, STEP_TIME, drone_relative)),
     
-	(5,    0,      Goto(0, -box_size,   0, 2, drone_relative)),
-    (5,    1,      Goto(0, -box_size,   0, 2, drone_relative)),
-    (5,    2,      Goto(0, -box_size,   0, 2, drone_relative)),
+	(5,    0,      Goto(0, -box_size,   0, STEP_TIME, drone_relative)),
+    (5,    1,      Goto(0, -box_size,   0, STEP_TIME, drone_relative)),
+    (5,    2,      Goto(0, -box_size,   0, STEP_TIME, drone_relative)),
     
 	(6,    0,      Land(2)),
     (6,    1,      Land(2)),
@@ -273,7 +273,7 @@ def crazyflie_control(scf):
             set_ring_color(cf, command.r, command.g, command.b,
                            command.intensity, command.time)
             pass
-        elif type(command) is GoHome:
+        elif type(command) is Gohome:
             idx = uris.index(cf.link_uri)
             with starting_positions_lock:
                 home = starting_positions[idx]
@@ -281,7 +281,7 @@ def crazyflie_control(scf):
                 print(f"NO HOME FOUND {cf.link_uri}")
                 continue
             
-            commander.go_to(home[0], home[1], home[2] +.5, 0, 2, field_relative)
+            commander.go_to(home[0], home[1], home[2] +.5, 0, command.time, field_relative)
         else:
             print('Warning! unknown command {} for uri {}'.format(command,
                                                                   cf.uri))

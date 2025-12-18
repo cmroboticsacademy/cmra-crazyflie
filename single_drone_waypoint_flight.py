@@ -64,7 +64,7 @@ Goto = namedtuple('Goto', ['x', 'y', 'z', 'time', 'relative'])
 Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 # Reserved for the control loop, do not use in sequence
 Quit = namedtuple('Quit', [])
-GoHome = namedtuple('GoHome', [])
+Gohome = namedtuple('Gohome', ['time'])
 
 
 
@@ -79,13 +79,13 @@ sequence = [
     # Step, CF_id,  action
     (0,    0,      Arm()),
 
-    (1,    0,      Takeoff(1.0, 2)),
+    (1,    0,      Takeoff(1.0, STEP_TIME)),
 
-    (2,    0,      Goto(1,  1,   1, 2, field_relative)),
+    (2,    0,      Goto(1,  1,  1, STEP_TIME, field_relative)),
     
-    (3,    0,      GoHome()),
+    (3,    0,      Gohome(STEP_TIME)),
     
-	(4,    0,      Land(2)),
+	(4,    0,      Land(STEP_TIME)),
     
 ]
 
@@ -245,7 +245,7 @@ def crazyflie_control(scf):
             set_ring_color(cf, command.r, command.g, command.b,
                            command.intensity, command.time)
             pass
-        elif type(command) is GoHome:
+        elif type(command) is Gohome:
             idx = uris.index(cf.link_uri)
             with starting_positions_lock:
                 home = starting_positions[idx]
@@ -253,7 +253,7 @@ def crazyflie_control(scf):
                 print(f"NO HOME FOUND {cf.link_uri}")
                 continue
             
-            commander.go_to(home[0], home[1], home[2] +.5, 0, 2, field_relative)
+            commander.go_to(home[0], home[1], home[2] +.5, 0, command.time, field_relative)
         else:
             print('Warning! unknown command {} for uri {}'.format(command,
                                                                   cf.uri))
