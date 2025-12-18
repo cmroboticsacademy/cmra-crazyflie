@@ -43,7 +43,8 @@ from queue import Queue
 import cflib.crtp
 from cflib.crazyflie.swarm import CachedCfFactory
 from cflib.crazyflie.swarm import Swarm
-
+from cflib.crazyflie.log import LogConfig
+from cflib.crazyflie.syncLogger import SyncLogger
 
 
 # Define the URI of the Crazyflie (e.g., replace with your specific radio addresses)
@@ -54,6 +55,8 @@ uris = [
     # Add more URIs if you want more copters in the swarm
 ]
 
+starting_positions = [None] * len(uris)
+starting_positions_lock = threading.Lock()
 
 # Possible commands, all times are in seconds
 Arm = namedtuple('Arm', [])
@@ -64,6 +67,7 @@ Goto = namedtuple('Goto', ['x', 'y', 'z', 'time', 'relative'])
 Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 # Reserved for the control loop, do not use in sequence
 Quit = namedtuple('Quit', [])
+GoHome = namedtuple('GoHome', [])
 
 
 # variables for controlling relative vs absolute movements. DO NOT TOUCH
@@ -116,7 +120,83 @@ def verify_loco_deck_swarm(swarm):
 
     swarm.parallel_safe(check_deck)
     return all_connected
+def wait_for_position_estimator(scf):
+    print('Waiting for estimator to find position...')
 
+    log_config = LogConfig(name='Kalman Variance', period_in_ms=500)
+    log_config.add_variable('kalman.varPX', 'float')
+    log_config.add_variable('kalman.varPY', 'float')
+    log_config.add_variable('kalman.varPZ', 'float')
+
+    var_y_history = [1000] * 10
+    var_x_history = [1000] * 10
+    var_z_history = [1000] * 10
+
+    threshold = 0.001
+
+    with SyncLogger(scf, log_config) as logger:
+        for log_entry in logger:
+            data = log_entry[1]
+
+            var_x_history.append(data['kalman.varPX'])
+            var_x_history.pop(0)
+            var_y_history.append(data['kalman.varPY'])
+            var_y_history.pop(0)
+            var_z_history.append(data['kalman.varPZ'])
+            var_z_history.pop(0)
+
+            min_x = min(var_x_history)
+            max_x = max(var_x_history)
+            min_y = min(var_y_history)
+            max_y = max(var_y_history)
+            min_z = min(var_z_history)
+            max_z = max(var_z_history)
+
+            if (max_x - min_x) < threshold and (
+                    max_y - min_y) < threshold and (
+                    max_z - min_z) < threshold:
+                break
+
+def reset_estimator(scf):
+    cf = scf.cf
+    cf.param.set_value('kalman.resetEstimation', '1')
+    time.sleep(0.1)
+    cf.param.set_value('kalman.resetEstimation', '0')
+
+    wait_for_position_estimator(scf)
+    
+def save_initial_state(scf):
+    
+    log_config = LogConfig(name='Initial State', period_in_ms=500)
+    log_config.add_variable('kalman.stateX', 'float')
+    log_config.add_variable('kalman.stateY', 'float')
+    log_config.add_variable('kalman.stateZ', 'float')
+
+    with SyncLogger(scf, log_config) as logger:
+        for log_entry in logger:
+            data = log_entry[1]
+            pos = (data['kalman.stateX'], data['kalman.stateY'], data['kalman.stateZ'])
+            idx = uris.index(scf.cf.link_uri)
+            with starting_positions_lock:
+                starting_positions[idx] = pos
+            print(f"Initial state saved: (idx {idx}): {pos}")
+            break  # Exit after saving the first reading
+
+def position_callback(timestamp, data, logconf):
+    x = data['kalman.stateX']
+    y = data['kalman.stateY']
+    z = data['kalman.stateZ']
+    print('pos: ({}, {}, {})'.format(x, y, z))
+
+def start_position_printing(scf):
+    log_conf = LogConfig(name='Position', period_in_ms=500)
+    log_conf.add_variable('kalman.stateX', 'float')
+    log_conf.add_variable('kalman.stateY', 'float')
+    log_conf.add_variable('kalman.stateZ', 'float')
+
+    scf.cf.log.add_config(log_conf)
+    log_conf.data_received_cb.add_callback(position_callback)
+    log_conf.start()
 
 
 def arm(scf):
@@ -164,6 +244,15 @@ def crazyflie_control(scf):
             set_ring_color(cf, command.r, command.g, command.b,
                            command.intensity, command.time)
             pass
+        elif type(command) is GoHome:
+            idx = uris.index(cf.link_uri)
+            with starting_positions_lock:
+                home = starting_positions[idx]
+            if home is None:
+                print(f"NO HOME FOUND {cf.link_uri}")
+                continue
+            
+            commander.go_to(home[0], home[1], home[2] +.5, 0, 2, field_relative)
         else:
             print('Warning! unknown command {} for uri {}'.format(command,
                                                                   cf.uri))
@@ -210,13 +299,14 @@ if __name__ == '__main__':
 
         
         print("Resetting Estimators")
-        swarm.reset_estimators()
+        swarm.parallel_safe(reset_estimator)
         print("Estimators Reset")
+        swarm.parallel_safe(save_initial_state)
+        print("Starting points:", starting_positions)
         
         input("Ready to Fly, press ENTER to continue")
 
         print('Starting sequence!')
-
         threading.Thread(target=control_thread).start()
 
         swarm.parallel_safe(crazyflie_control)

@@ -66,12 +66,14 @@ Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 Quit = namedtuple('Quit', [])
 GoHome = namedtuple('GoHome', [])
 
-# Time for one step in second
-STEP_TIME = 2
+
 
 # variables for controlling relative vs absolute movements. DO NOT TOUCH
 field_relative = False
 drone_relative = True
+
+# Time for one step in second
+STEP_TIME = 2
 
 sequence = [
     # Step, CF_id,  action
