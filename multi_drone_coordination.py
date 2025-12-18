@@ -51,7 +51,7 @@ from cflib.crazyflie.syncLogger import SyncLogger
 uris = [
     'radio://0/80/2M/E7E7E7E7E7',  # cf_id 0, startup position (1,1)
     'radio://0/80/2M/E7E7E7E7E8',  # cf_id 1, startup position (.5,1)
-    'radio://0/80/2M/E7E7E7E7E9',  # cf_id 3, startup position (1.5,1)
+    'radio://0/80/2M/E7E7E7E7E9',  # cf_id 2, startup position (1.5,1)
     # Add more URIs if you want more copters in the swarm
 ]
 
