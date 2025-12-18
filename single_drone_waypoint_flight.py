@@ -44,12 +44,7 @@ from cflib.crazyflie.swarm import CachedCfFactory
 from cflib.crazyflie.swarm import Swarm
 from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncLogger import SyncLogger
-# Time for one step in second
-STEP_TIME = 2
 
-# variables for controlling relative vs absolute movements. DO NOT TOUCH
-field_relative = False
-drone_relative = True
 
 
 # Define the URI of the Crazyflie (e.g., replace with your specific radio addresses)
@@ -71,6 +66,13 @@ Ring = namedtuple('Ring', ['r', 'g', 'b', 'intensity', 'time'])
 Quit = namedtuple('Quit', [])
 GoHome = namedtuple('GoHome', [])
 
+# Time for one step in second
+STEP_TIME = 2
+
+# variables for controlling relative vs absolute movements. DO NOT TOUCH
+field_relative = False
+drone_relative = True
+
 sequence = [
     # Step, CF_id,  action
     (0,    0,      Arm()),
@@ -79,7 +81,7 @@ sequence = [
 
     (2,    0,      Goto(1,  1,   1, 2, field_relative)),
     
-    (3, 0, GoHome()),
+    (3,    0,      GoHome()),
     
 	(4,    0,      Land(2)),
     
