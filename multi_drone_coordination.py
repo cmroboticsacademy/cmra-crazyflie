@@ -90,10 +90,6 @@ sequence = [
     (1,    1,      Takeoff(1.0, STEP_TIME)),
     (1,    2,      Takeoff(1.0, STEP_TIME)),
     
-    (2,    0,      Goto(0.1,  1,   1, STEP_TIME, field_relative)),
-    (2,    1,      Goto(0.5,  1,   1, STEP_TIME, field_relative)),
-    (2,    2,      Goto(1.5,  1,   1, STEP_TIME, field_relative)),
-
     (2,    0,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
     (2,    1,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
     (2,    2,      Goto(box_size,  0,   0, STEP_TIME, drone_relative)),
