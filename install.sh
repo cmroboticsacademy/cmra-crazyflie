@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 CFLIB_DIR="$SCRIPT_DIR/crazyflie-lib-python"
 CFLIB_REPO="https://github.com/bitcraze/crazyflie-lib-python.git"
+LPS_DIR="$SCRIPT_DIR/lps-tools"
+LPS_REPO="https://github.com/bitcraze/lps-tools.git"
 APP_DIR="$HOME/.local/share/applications"
 WRAPPER_DIR="$HOME/.local/bin"
 WRAPPER="$WRAPPER_DIR/cmra-cfclient"
@@ -63,9 +65,6 @@ python -m pip --version
 log "Installing uv using Astral's official installer..."
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# The standalone uv installer normally places uv/uvx in ~/.local/bin and may
-# update shell startup files. Add it explicitly here so this same process can
-# verify and use uvx immediately.
 export PATH="$HOME/.local/bin:$PATH"
 if [[ -f "$HOME/.local/bin/env" ]]; then
     # shellcheck disable=SC1091
@@ -106,8 +105,6 @@ StartupNotify=true
 DESKTOP_EOF
 chmod +x "$APP_DESKTOP_FILE"
 
-# Create an actual desktop copy as requested. Prefer the user's configured
-# desktop directory when xdg-user-dir is available.
 if command -v xdg-user-dir >/dev/null 2>&1; then
     DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
 else
@@ -117,7 +114,6 @@ DESKTOP_DIR="${DESKTOP_DIR:-$HOME/Desktop}"
 mkdir -p "$DESKTOP_DIR"
 cp "$APP_DESKTOP_FILE" "$DESKTOP_DIR/$DESKTOP_FILE_NAME"
 chmod +x "$DESKTOP_DIR/$DESKTOP_FILE_NAME"
-# GNOME may require desktop launchers to be marked trusted. Do this when gio is available.
 if command -v gio >/dev/null 2>&1; then
     gio set "$DESKTOP_DIR/$DESKTOP_FILE_NAME" metadata::trusted true >/dev/null 2>&1 || true
 fi
@@ -138,6 +134,46 @@ log "Installing crazyflie-lib-python in editable mode into the project venv..."
 cd "$CFLIB_DIR"
 python -m pip install -e .
 
+log "Cloning Bitcraze LPS Tools..."
+if [[ -e "$LPS_DIR" ]]; then
+    if [[ -d "$LPS_DIR/.git" ]]; then
+        ok "lps-tools already exists; using the existing checkout."
+    else
+        fail "$LPS_DIR exists but is not a Git repository. Remove or rename it, then run the installer again."
+    fi
+else
+    git clone "$LPS_REPO" "$LPS_DIR"
+fi
+
+log "Installing LPS Tools with PyQt5 support into the project venv..."
+cd "$LPS_DIR"
+python -m pip install -e '.[pyqt5]'
+
+log "Configuring LPS USB bootloader access..."
+sudo tee /etc/udev/rules.d/99-lps.rules >/dev/null <<'UDEV_EOF'
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="df11", MODE="0664", GROUP="plugdev"
+UDEV_EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+ok "Installed /etc/udev/rules.d/99-lps.rules"
+
+log "Ensuring the current user has LPS USB and serial-port access..."
+GROUP_MEMBERSHIP_CHANGED=0
+
+if ! getent group plugdev >/dev/null 2>&1; then
+    sudo groupadd --system plugdev
+fi
+
+for group in plugdev dialout; do
+    if id -nG "$USER" | tr ' ' '\n' | grep -qx "$group"; then
+        ok "$USER is already a member of the $group group."
+    else
+        sudo adduser "$USER" "$group"
+        GROUP_MEMBERSHIP_CHANGED=1
+        ok "Added $USER to the $group group."
+    fi
+done
+
 log "Checking installed Python dependency consistency..."
 python -m pip check
 
@@ -153,6 +189,18 @@ print(f"MotionCommander import OK: {MotionCommander.__name__}")
 PY
 ok "Crazyflie Python libraries imported successfully."
 
+log "Testing LPS Tools imports..."
+python - <<'PY'
+import lpstools
+import serial
+import usb
+
+print(f"lpstools import OK: {lpstools.__file__}")
+print(f"pyserial import OK: {serial.__file__}")
+print(f"pyusb import OK: {usb.__file__}")
+PY
+ok "LPS Tools Python libraries imported successfully."
+
 cat <<SUMMARY_EOF
 
 ============================================================
@@ -161,6 +209,7 @@ CMRA Crazyflie installation completed successfully.
 Project:       $SCRIPT_DIR
 Python venv:   $VENV_DIR
 CFlib source:  $CFLIB_DIR
+LPS Tools:     $LPS_DIR
 Launcher:      $WRAPPER
 Desktop entry: $DESKTOP_DIR/$DESKTOP_FILE_NAME
 
@@ -170,5 +219,14 @@ To activate the project environment in a new terminal:
 To launch the Crazyflie client from a terminal:
   uvx cfclient
 
+To launch LPS Tools:
+  source "$VENV_DIR/bin/activate"
+  python -m lpstools
+
 You can also launch "Crazyflie Client" from the desktop/application menu.
 SUMMARY_EOF
+
+if [[ "${GROUP_MEMBERSHIP_CHANGED:-0}" -eq 1 ]]; then
+    printf '\nNOTE: Your Linux device-access group membership was updated.\n'
+    printf 'Log out of Ubuntu and log back in before using LPS USB/serial devices.\n'
+fi
